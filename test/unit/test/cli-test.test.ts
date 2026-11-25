@@ -234,7 +234,12 @@ test('bail is parsed correctly', () => {
   expect(getCLIOptions('--bail=2')).toEqual({ bail: 2 })
   expect(getCLIOptions('--bail=0')).toEqual({ bail: 0 })
 
-  expect(() => getCLIOptions('--bail example.test.ts')).toThrowErrorMatchingInlineSnapshot(
+  expect(parseArguments('--bail example.test.ts')).toMatchObject({
+    options: { bail: 1 },
+    args: ['example.test.ts'],
+  })
+
+  expect(() => getCLIOptions('--bail=example.test.ts')).toThrowErrorMatchingInlineSnapshot(
     `[TypeError: Unexpected value "--bail=example.test.ts". Use "--bail=1 example.test.ts" instead.]`,
   )
 })
@@ -428,7 +433,12 @@ test('silent', () => {
   expect(getCLIOptions('--silent=passed-only')).toEqual({ silent: 'passed-only' })
   expect(getCLIOptions('--silent=true example.test.ts')).toEqual({ silent: true })
 
-  expect(() => getCLIOptions('--silent example.test.ts')).toThrowErrorMatchingInlineSnapshot(
+  expect(parseArguments('--silent example.test.ts')).toMatchObject({
+    options: { silent: true },
+    args: ['example.test.ts'],
+  })
+
+  expect(() => getCLIOptions('--silent=example.test.ts')).toThrowErrorMatchingInlineSnapshot(
     `[TypeError: Unexpected value "--silent=example.test.ts". Use "--silent=true example.test.ts" instead.]`,
   )
 })
@@ -642,5 +652,115 @@ test('execArgv can be passed', async () => {
 
   expect(getCLIOptions('--execArgv=--cpu-prof --execArgv=--cpu-prof-dir=./cpu')).toEqual({
     execArgv: ['--cpu-prof', '--cpu-prof-dir=./cpu'],
+  })
+})
+
+test('options with optional values do not consume file filters', () => {
+  expect(parseArguments('run -u a.test.js')).toMatchObject({
+    options: { update: true, u: true },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --update a.test.js b.test.js')).toMatchObject({
+    options: { update: true },
+    args: ['a.test.js', 'b.test.js'],
+  })
+  expect(parseArguments('run -u all a.test.js')).toMatchObject({
+    options: { update: 'all' },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run -u new a.test.js')).toMatchObject({
+    options: { update: 'new' },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run -u none a.test.js')).toMatchObject({
+    options: { update: 'none' },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --update=false a.test.js')).toMatchObject({
+    options: { update: false },
+    args: ['a.test.js'],
+  })
+  expect(() => getCLIOptions('--update=invalid')).toThrowErrorMatchingInlineSnapshot(
+    `[TypeError: Unexpected value "--update=invalid". Use "--update=true invalid" instead.]`,
+  )
+  expect(parseArguments('run -wu a.test.js')).toMatchObject({
+    options: { watch: true, update: true },
+    args: ['a.test.js'],
+  })
+
+  expect(parseArguments('run --silent passed-only a.test.js')).toMatchObject({
+    options: { silent: 'passed-only' },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --bail 2 a.test.js')).toMatchObject({
+    options: { bail: 2 },
+    args: ['a.test.js'],
+  })
+
+  expect(parseArguments('run --api a.test.js')).toMatchObject({
+    options: { api: true },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --api 51204 a.test.js')).toMatchObject({
+    options: { api: { port: 51204 } },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --api.port a.test.js')).toMatchObject({
+    options: { api: { port: true } },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --api.port 51204 a.test.js')).toMatchObject({
+    options: { api: { port: 51204 } },
+    args: ['a.test.js'],
+  })
+
+  expect(parseArguments('run --inspect a.test.js')).toMatchObject({
+    options: { inspect: true },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --inspect a.test.ts:10')).toMatchObject({
+    options: { inspect: true },
+    args: ['a.test.ts:10'],
+  })
+  expect(parseArguments('run --inspect 9229 a.test.js')).toMatchObject({
+    options: { inspect: 9229 },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --inspect 127.0.0.1:9229 a.test.js')).toMatchObject({
+    options: { inspect: '127.0.0.1:9229' },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --inspect-brk a.test.js')).toMatchObject({
+    options: { inspectBrk: true },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --inspectBrk localhost:9229 a.test.js')).toMatchObject({
+    options: { inspectBrk: 'localhost:9229' },
+    args: ['a.test.js'],
+  })
+
+  expect(parseArguments('run --list-tags a.test.js')).toMatchObject({
+    options: { listTags: true },
+    args: ['a.test.js'],
+  })
+  expect(parseArguments('run --list-tags json a.test.js')).toMatchObject({
+    options: { listTags: 'json' },
+    args: ['a.test.js'],
+  })
+
+  expect(parseArguments('run -u a.test.js --silent b.test.js -- --extra', true)).toMatchObject({
+    options: { update: true, silent: true, '--': ['--extra'] },
+    args: ['a.test.js', 'b.test.js'],
+  })
+
+  expect(parseCLI('vitest run -u a.test.js')).toEqual({
+    filter: ['a.test.js'],
+    options: {
+      run: true,
+      update: true,
+      u: true,
+      '--': [],
+      color: true,
+    },
   })
 })

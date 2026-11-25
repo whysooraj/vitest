@@ -71,12 +71,121 @@ function addCliOptions(cli: CAC | Command, options: CLIOptionsConfig<any>) {
   }
 }
 
+function camelcase(input: string): string {
+  return input.replace(/[-_](\w)/g, (_, c) => c.toUpperCase())
+}
+
+function camelcaseOptionName(name: string): string {
+  return name
+    .split('.')
+    .map((v, i) => (i === 0 ? camelcase(v) : v))
+    .join('.')
+}
+
+function isInspectValue(v: string): boolean {
+  if (['true', 'false', 'yes', 'no'].includes(v)) {
+    return true
+  }
+  if (/^\d+$/.test(v)) {
+    return true
+  }
+  if (v.includes(':')) {
+    const lastColon = v.lastIndexOf(':')
+    const port = v.slice(lastColon + 1)
+    const host = v.slice(0, lastColon)
+    if (/^\d+$/.test(port) && !/\.(?:[cm]?[jt]sx?|json|vue|svelte|html)$/i.test(host)) {
+      return true
+    }
+  }
+  return false
+}
+
+const ACCEPTED_OPTIONAL_VALUES: Record<string, (val: string) => boolean> = {
+  update: (v) => ['all', 'new', 'none', 'true', 'false', 'yes', 'no'].includes(v),
+  u: (v) => ['all', 'new', 'none', 'true', 'false', 'yes', 'no'].includes(v),
+  silent: (v) => ['passed-only', 'true', 'false', 'yes', 'no'].includes(v),
+  bail: (v) => /^\d+$/.test(v) || ['true', 'false'].includes(v),
+  api: (v) => /^\d+$/.test(v) || ['true', 'false', 'yes', 'no'].includes(v),
+  'api.port': (v) => /^\d+$/.test(v) || ['true', 'false', 'yes', 'no'].includes(v),
+  inspect: isInspectValue,
+  inspectBrk: isInspectValue,
+  listTags: (v) => ['json', 'html', 'true', 'false', 'yes', 'no'].includes(v),
+}
+
 export function createCLI(options: CliParseOptions = {}): CAC {
   if (isAgent && !isForceColor()) {
     disableDefaultColors()
   }
 
   const cli = cac('vitest')
+
+  const origMri = (cli as any).mri.bind(cli)
+  ;(cli as any).mri = function (argv: string[], command?: Command) {
+    const cliOptions = [...cli.globalCommand.options, ...(command ? command.options : [])]
+
+    const resetList: { opt: any; rawArgName: string; hadRaw: boolean }[] = []
+
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      if (arg === '--') {
+        break
+      }
+
+      let optName: string | null = null
+      let rawArgName: string | null = null
+      if (arg.startsWith('--')) {
+        if (!arg.includes('=')) {
+          rawArgName = arg.slice(2)
+          const cName = camelcaseOptionName(rawArgName)
+          if (ACCEPTED_OPTIONAL_VALUES[cName]) {
+            optName = cName
+          } else if (ACCEPTED_OPTIONAL_VALUES[rawArgName]) {
+            optName = rawArgName
+          }
+        }
+      } else if (arg.startsWith('-') && arg.length > 1) {
+        if (!arg.includes('=')) {
+          const lastChar = arg[arg.length - 1]
+          if (ACCEPTED_OPTIONAL_VALUES[lastChar]) {
+            optName = lastChar
+            rawArgName = lastChar
+          }
+        }
+      }
+
+      if (optName && rawArgName) {
+        const predicate = ACCEPTED_OPTIONAL_VALUES[optName]
+        const nextToken = argv[i + 1]
+        if (nextToken !== undefined && !nextToken.startsWith('-')) {
+          if (!predicate(nextToken)) {
+            const opt = cliOptions.find((o) => o.names.includes(optName!) || o.name === optName)
+            if (opt && !opt.isBoolean) {
+              opt.isBoolean = true
+              const hadRaw = opt.names.includes(rawArgName)
+              if (!hadRaw) {
+                opt.names.push(rawArgName)
+              }
+              resetList.push({ opt, rawArgName, hadRaw })
+            }
+          }
+        }
+      }
+    }
+
+    try {
+      return origMri(argv, command)
+    } finally {
+      for (const { opt, rawArgName, hadRaw } of resetList) {
+        opt.isBoolean = false
+        if (!hadRaw) {
+          const idx = opt.names.indexOf(rawArgName)
+          if (idx > -1) {
+            opt.names.splice(idx, 1)
+          }
+        }
+      }
+    }
+  }
 
   cli.version(version)
 
